@@ -1,0 +1,1 @@
+import{i as e,n as t,s as n}from"./preload-helper-XeGnDlpS.js";function r(){return n.getQueryData(t)?.bridge??e}export{r as t};

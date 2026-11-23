@@ -1,0 +1,25 @@
+# Gradle & Android build artifacts
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+.cxx/
+captures/
+
+# Web UI dependencies & build outputs (bundled copy lives in app/src/main/assets/public)
+web-ui/node_modules/
+web-ui/dist/
+web-ui/.vite/
+web-ui/*.log
+
+# Keystores & local secrets
+*.jks
+*.keystore
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
