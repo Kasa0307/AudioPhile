@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { PrefetchLink } from '@/components/PrefetchLink';
@@ -15,6 +16,7 @@ import type { MusicItem, SearchResults, Shelf } from '@/data/music/types';
 import { cleanTrackTitle } from '@/lib/cleanTitle';
 import { triggerHaptic } from '@/lib/haptics';
 import { ShelfSkeleton } from '@/skeletons/ShelfSkeleton';
+import { useBatchSelect } from '@/state/batchSelect';
 
 type SearchFilter = 'all' | 'songs' | 'albums' | 'artists' | 'playlists' | 'videos';
 
@@ -54,6 +56,10 @@ function shelvesFor(results: SearchResults, filter: SearchFilter): Shelf[] {
 }
 
 function TopResult({ item }: { item: MusicItem }) {
+  const selecting = useBatchSelect((s) => s.selecting);
+  const selected = useBatchSelect((s) => s.selectedTracks.some((t) => t.videoId === item.id));
+  const toggleTrack = useBatchSelect((s) => s.toggleTrack);
+
   const href = hrefFor(item);
   const playable = item.kind === 'song' || item.kind === 'video';
   const artistLine = item.artists.map((a) => a.name).join(', ');
@@ -68,7 +74,7 @@ function TopResult({ item }: { item: MusicItem }) {
           radius={item.kind === 'artist' ? '50%' : '12px'}
         />
       </div>
-      <div className={playable ? 'flex min-w-0 flex-1 flex-col gap-0.5 pr-8' : 'flex min-w-0 flex-1 flex-col gap-0.5'}>
+      <div className={playable ? 'flex min-w-0 flex-1 flex-col gap-0.5 pr-9' : 'flex min-w-0 flex-1 flex-col gap-0.5'}>
         <span className="font-mono text-[9.5px] font-semibold tracking-[0.12em] uppercase" style={{ color: 'var(--accent-bright)' }}>
           {KIND_LABEL[item.kind] || 'MATCH'}
         </span>
@@ -81,8 +87,11 @@ function TopResult({ item }: { item: MusicItem }) {
   );
 
   return (
-    <div className="acoustic-glass group/top relative rounded-[18px] transition-colors hover:bg-white/[0.08]">
-      {href ? (
+    <div
+      className="acoustic-glass group/top relative rounded-[18px] transition-colors hover:bg-white/[0.08]"
+      style={selecting && playable && selected ? { borderColor: 'rgba(var(--accent-rgb), 0.6)', backgroundColor: 'rgba(var(--accent-rgb), 0.14)' } : undefined}
+    >
+      {href && !(selecting && playable) ? (
         <PrefetchLink
           to={href}
           onClick={() => triggerHaptic('light')}
@@ -95,6 +104,10 @@ function TopResult({ item }: { item: MusicItem }) {
           type="button"
           className="flex w-full items-center gap-3.5 p-2.5 text-left"
           onClick={() => {
+            if (selecting && playable) {
+              toggleTrack(toTrack(item));
+              return;
+            }
             triggerHaptic('light');
             playTrack(item);
           }}
@@ -102,12 +115,29 @@ function TopResult({ item }: { item: MusicItem }) {
           {body}
         </button>
       )}
-      {playable && (
-        <TrackMenu
-          track={toTrack(item)}
-          className="absolute right-2.5 bottom-2.5 z-3 grid size-7 place-items-center rounded-full text-secondary hover:bg-white/[0.1] hover:text-primary"
-        />
-      )}
+      {playable &&
+        (selecting ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 right-3 z-3 grid size-6 -translate-y-1/2 place-items-center rounded-full border transition-all"
+            style={
+              selected
+                ? {
+                    borderColor: 'var(--accent-hex)',
+                    backgroundColor: 'var(--accent-hex)',
+                    boxShadow: '0 0 10px rgba(var(--accent-rgb), 0.45)',
+                  }
+                : { borderColor: 'rgba(255,255,255,0.28)' }
+            }
+          >
+            {selected && <Check size={13} strokeWidth={3} className="text-white" />}
+          </span>
+        ) : (
+          <TrackMenu
+            track={toTrack(item)}
+            className="absolute right-2.5 bottom-2.5 z-3 grid size-8 place-items-center rounded-full text-secondary hover:bg-white/[0.1] hover:text-primary"
+          />
+        ))}
     </div>
   );
 }

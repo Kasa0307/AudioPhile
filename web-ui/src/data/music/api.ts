@@ -297,9 +297,20 @@ export async function fetchPlaylistOptions(videoId: string): Promise<PlaylistOpt
 }
 
 export async function addToPlaylist(playlistId: string, videoId: string): Promise<void> {
+  await addTracksToPlaylist(playlistId, [videoId]);
+}
+
+/** Adds one or multiple tracks to a single playlist in one batched InnerTube call (auto-deduplicated). */
+export async function addTracksToPlaylist(playlistId: string, videoIds: string[]): Promise<void> {
+  const unique = [...new Set(videoIds.filter(Boolean))];
+  if (!unique.length) return;
   await executeSigned('/browse/edit_playlist', {
     playlistId: playlistId.replace(/^VL/, ''),
-    actions: [{ action: 'ACTION_ADD_VIDEO', addedVideoId: videoId, dedupeOption: 'DEDUPE_OPTION_SKIP' }],
+    actions: unique.map((addedVideoId) => ({
+      action: 'ACTION_ADD_VIDEO',
+      addedVideoId,
+      dedupeOption: 'DEDUPE_OPTION_SKIP',
+    })),
   });
 }
 

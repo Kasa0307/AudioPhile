@@ -1,8 +1,13 @@
-import { Search, X } from 'lucide-react';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ArrowUpRight, Check, Search, Sparkles, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router';
 import { useSuggestions } from '@/data/music/queries';
 import type { MusicItem } from '@/data/music/types';
+import { cleanTrackTitle } from '@/lib/cleanTitle';
+import { triggerHaptic } from '@/lib/haptics';
+import { useBatchSelect } from '@/state/batchSelect';
+import { useUi } from '@/state/ui';
 import { Artwork } from './Artwork';
 import { hrefFor } from './links';
 import { playTrack, toTrack } from './play';
@@ -10,10 +15,29 @@ import { TrackMenu } from './TrackMenu';
 
 type Option = { kind: 'query'; text: string; typed: string; rest: string } | { kind: 'item'; item: MusicItem };
 
+function kindLabel(kind: MusicItem['kind']): string {
+  switch (kind) {
+    case 'song':
+      return 'Track';
+    case 'video':
+      return 'Video';
+    case 'album':
+      return 'Album';
+    case 'artist':
+      return 'Artist';
+    case 'playlist':
+    case 'spotify-playlist':
+      return 'Playlist';
+    default:
+      return '';
+  }
+}
+
 /**
- * The centred search field and its suggestions (report §6): a pill field, and
- * a glass dropdown of completions, then artist, album and song suggestions.
- * Arrow keys move through it; Enter picks; Escape closes.
+ * Full-Width Acoustic Glass Slide-Up Search Sheet:
+ * Rises smoothly from the bottom (matching Add to Playlist & Track Options),
+ * supports Android Back gesture dismissal, instant query completions,
+ * direct track/artist/album results, and Multi-Select Mode checkmarks.
  */
 export function SearchField({
   initial,
@@ -25,195 +49,322 @@ export function SearchField({
   onFocusChange?: (focused: boolean) => void;
 }) {
   const [value, setValue] = useState(initial);
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
-  const input = useRef<HTMLInputElement>(null);
-  const listId = useId();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const swipeStartY = useRef<number | null>(null);
   const navigate = useNavigate();
-  const suggestions = useSuggestions(open ? value : '');
-  // A suggestion's track menu takes focus when it opens (Menu focuses its
-  // first item), which would otherwise read as the field blurring and close
-  // the dropdown under the open menu. While a menu is open the blur close is
-  // held off; when the menu closes, its pick is done, so the dropdown
-  // closes with it.
-  const menuOpen = useRef(false);
-  const onMenuOpenChange = useCallback((isOpen: boolean) => {
-    const wasOpen = menuOpen.current;
-    menuOpen.current = isOpen;
-    if (!isOpen && wasOpen) setOpen(false);
-  }, []);
+
+  const selecting = useBatchSelect((s) => s.selecting);
+  const selectedTracks = useBatchSelect((s) => s.selectedTracks);
+  const toggleTrack = useBatchSelect((s) => s.toggleTrack);
+
+  const suggestions = useSuggestions(sheetOpen ? value : '');
 
   useEffect(() => setValue(initial), [initial]);
+
+  const closeSheet = useCallback(() => {
+    setSheetOpen(false);
+    onFocusChange?.(false);
+  }, [onFocusChange]);
+
+  const openSheet = useCallback(() => {
+    triggerHaptic('light');
+    setSheetOpen(true);
+    onFocusChange?.(true);
+  }, [onFocusChange]);
+
+  // Register sheet with Android Back handler & auto-focus input cleanly
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeSheet();
+    };
+    window.addEventListener('keydown', onKey);
+    useUi.getState().setActiveMenuClose(closeSheet);
+    const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 60);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('keydown', onKey);
+      if (useUi.getState().activeMenuClose === closeSheet) {
+        useUi.getState().setActiveMenuClose(null);
+      }
+    };
+  }, [sheetOpen, closeSheet]);
 
   const options: Option[] = [
     ...(suggestions.data?.queries ?? []).map((q) => ({ kind: 'query' as const, ...q })),
     ...(suggestions.data?.items ?? []).map((item) => ({ kind: 'item' as const, item })),
   ];
-  const showList = open && value.trim().length > 0 && options.length > 0;
 
-  const pick = (option: Option | undefined) => {
-    if (menuOpen.current) return;
-    setOpen(false);
-    setActive(-1);
-    if (!option) return onSearch(value.trim());
+  const submitQuery = (raw: string) => {
+    const trimmed = raw.trim();
+    closeSheet();
+    onSearch(trimmed);
+  };
+
+  const pickOption = (option: Option) => {
     if (option.kind === 'query') {
+      triggerHaptic('light');
       setValue(option.text);
-      return onSearch(option.text);
+      submitQuery(option.text);
+      return;
     }
-    const href = hrefFor(option.item);
+    const item = option.item;
+    const playable = item.kind === 'song' || item.kind === 'video';
+    if (selecting && playable) {
+      toggleTrack(toTrack(item));
+      return;
+    }
+    triggerHaptic('light');
+    const href = hrefFor(item);
+    closeSheet();
     if (href) navigate(href);
-    else playTrack(option.item);
+    else playTrack(item);
   };
 
   return (
-    <div className="relative w-full max-w-[540px]">
-      <form
-        className="relative flex items-center"
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          pick(active >= 0 ? options[active] : undefined);
-        }}
-      >
-        <Search
-          size={16}
-          strokeWidth={2.3}
-          className="pointer-events-none absolute left-3.5 text-secondary transition-colors"
-          style={open ? { color: 'var(--accent-bright)' } : undefined}
-          aria-hidden="true"
-        />
-        <input
-          ref={input}
-          className="h-[46px] w-full rounded-[18px] border border-white/[0.12] bg-[#101625]/82 pr-10 pl-10 text-[14.5px] font-medium text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.09),0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-[border-color,box-shadow] duration-200 placeholder:text-tertiary [&::-webkit-search-cancel-button]:hidden"
-          style={
-            open
-              ? {
-                  borderColor: 'rgba(var(--accent-rgb), 0.55)',
-                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12), 0 0 0 3px rgba(var(--accent-rgb), 0.16)',
-                }
-              : undefined
-          }
-          type="search"
-          value={value}
-          placeholder="Search tracks, artists, albums…"
-          aria-label="Search"
-          role="combobox"
-          aria-expanded={showList}
-          aria-controls={listId}
-          aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(e) => {
-            setValue(e.target.value);
-            setOpen(true);
-            setActive(-1);
-          }}
-          onFocus={() => {
-            setOpen(true);
-            onFocusChange?.(true);
-          }}
-          onBlur={() =>
-            setTimeout(() => {
-              if (!menuOpen.current) {
-                setOpen(false);
-                onFocusChange?.(false);
-              }
-            }, 140)
-          }
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              setActive((i) => Math.min(i + 1, options.length - 1));
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              setActive((i) => Math.max(i - 1, -1));
-            } else if (e.key === 'Escape') {
-              setOpen(false);
-            }
-          }}
-        />
+    <>
+      {/* Tactile Elevated Search Lens Trigger Bar */}
+      <div className="relative flex w-full max-w-[540px] items-center">
+        <button
+          type="button"
+          onClick={openSheet}
+          aria-label="Open search"
+          className="flex h-[46px] w-full items-center gap-2.5 rounded-full border border-white/[0.12] bg-[#101625]/84 pr-11 pl-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.09),0_10px_28px_rgba(0,0,0,0.45)] backdrop-blur-xl transition-all duration-150 active:scale-[0.99]"
+        >
+          <Search size={16} strokeWidth={2.3} className="flex-none text-secondary" />
+          <span className={`truncate text-[14.5px] font-medium ${value ? 'text-primary' : 'text-tertiary'}`}>
+            {value || 'Search tracks, artists, albums…'}
+          </span>
+        </button>
+
         {value && (
           <button
             type="button"
-            className="absolute right-[9px] grid size-4 place-items-center rounded-full bg-tertiary text-page"
-            aria-label="Clear"
-            onClick={() => {
+            aria-label="Clear search"
+            onClick={(e) => {
+              e.stopPropagation();
+              triggerHaptic('light');
               setValue('');
-              input.current?.focus();
+              onSearch('');
             }}
+            className="absolute right-2.5 grid size-7 place-items-center rounded-full bg-white/[0.1] text-secondary hover:text-primary active:scale-90"
           >
-            <X size={12} strokeWidth={3} />
+            <X size={14} strokeWidth={2.5} />
           </button>
         )}
-      </form>
-      {showList && (
-        // The dropdown: 302px of glass, 3px under the field.
-        <ul
-          id={listId}
-          className="absolute top-[calc(100%+3px)] left-0 z-(--z-contextual-menus) max-h-[min(700px,70vh)] w-[302px] overflow-y-auto rounded-[9px] border border-[#00000033] bg-thick-material py-1.5 shadow-[inset_0_0_0_1px_#ffffff33,0_8px_40px_#0000008c] [backdrop-filter:blur(60px)_saturate(2.2)]"
-          role="listbox"
-        >
-          {options.map((option, i) => {
-            const item = option.kind === 'item' ? option.item : null;
-            const playable = item !== null && (item.kind === 'song' || item.kind === 'video');
-            return (
-            <li
-              key={option.kind === 'query' ? `q-${option.text}` : `i-${option.item.id}`}
-              id={`${listId}-${i}`}
-              role="option"
-              aria-selected={i === active}
-              className={option.kind === 'query' ? hint : `${lockup} ${playable ? lockupMenuCols : lockupCols}`}
-              data-active={i === active || undefined}
-              onMouseDown={(e) => e.preventDefault()}
-              onMouseEnter={() => setActive(i)}
-              onClick={() => pick(option)}
+      </div>
+
+      {/* Full-Width Slide-Up Acoustic Glass Search Sheet */}
+      {sheetOpen &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Search Audiophile"
+            className="fixed inset-0 z-[10055] flex items-end justify-center bg-black/68 backdrop-blur-md"
+            onClick={closeSheet}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              onTouchStart={(e) => {
+                swipeStartY.current = e.touches[0]?.clientY ?? null;
+              }}
+              onTouchEnd={(e) => {
+                const y0 = swipeStartY.current;
+                swipeStartY.current = null;
+                const y1 = e.changedTouches[0]?.clientY;
+                if (y0 != null && y1 != null && y1 - y0 > 78) {
+                  triggerHaptic('light');
+                  closeSheet();
+                }
+              }}
+              className="animate-sheet-up relative flex h-[86dvh] w-full max-w-[540px] flex-col overflow-hidden rounded-t-[28px] border-t border-x border-white/[0.12] bg-[#0b101d]/98 px-4 pt-2.5 shadow-[0_-24px_64px_rgba(0,0,0,0.85)] backdrop-blur-3xl"
+              style={{
+                paddingBottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
+                backgroundImage:
+                  'radial-gradient(ellipse 90% 35% at 50% 0%, rgba(var(--accent-rgb), 0.22) 0%, transparent 72%)',
+              }}
             >
-              {option.kind === 'query' ? (
-                <>
-                  <Search size={13} strokeWidth={2.4} aria-hidden="true" />
-                  <span className="truncate">
-                    <span className="text-primary group-data-active/option:text-white">{option.typed}</span>
-                    <span>{option.rest}</span>
-                  </span>
-                </>
-              ) : (
-                <>
-                  <div className="w-[46px]">
-                    <Artwork
-                      src={option.item.thumbnail}
-                      displayWidth={46}
-                      radius={option.item.kind === 'artist' ? '50%' : 'var(--radius-artwork-small)'}
-                    />
-                  </div>
-                  <div className="flex min-w-0 flex-col">
-                    <span className="truncate type-body">{option.item.title}</span>
-                    <span className="mt-px truncate type-callout text-secondary group-data-active/option:text-white">{option.item.subtitle || kindLabel(option.item.kind)}</span>
-                  </div>
-                  {playable && item && (
-                    <TrackMenu
-                      track={toTrack(item)}
-                      onOpenChange={onMenuOpenChange}
-                      className="grid size-7 place-items-center rounded-full text-secondary opacity-0 transition-opacity duration-100 ease-in group-hover/option:opacity-100 group-data-active/option:text-white focus-visible:opacity-100 hover:bg-quinary group-data-active/option:hover:bg-white/20 data-open:opacity-100"
-                    />
+              {/* Drag handle */}
+              <div className="mx-auto mb-3 h-1 w-10 flex-none rounded-full bg-white/20" aria-hidden="true" />
+
+              {/* Full-Width Search Input Row */}
+              <form
+                role="search"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitQuery(value);
+                }}
+                className="mb-3 flex flex-none items-center gap-2"
+              >
+                <div
+                  className="relative flex flex-1 items-center rounded-full border bg-[#12192b]/90 px-3.5 transition-all"
+                  style={{
+                    borderColor: 'rgba(var(--accent-rgb), 0.55)',
+                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1), 0 0 0 3px rgba(var(--accent-rgb), 0.14)',
+                  }}
+                >
+                  <Search size={16} strokeWidth={2.3} style={{ color: 'var(--accent-bright)' }} className="flex-none" />
+                  <input
+                    ref={inputRef}
+                    type="search"
+                    value={value}
+                    placeholder="Search tracks, artists, albums…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    enterKeyHint="search"
+                    onChange={(e) => setValue(e.target.value)}
+                    className="h-[44px] w-full bg-transparent px-2.5 text-[15px] font-medium text-primary placeholder:text-tertiary [&::-webkit-search-cancel-button]:hidden"
+                  />
+                  {value && (
+                    <button
+                      type="button"
+                      aria-label="Clear"
+                      onClick={() => {
+                        triggerHaptic('light');
+                        setValue('');
+                        inputRef.current?.focus();
+                      }}
+                      className="grid size-6 flex-none place-items-center rounded-full bg-white/[0.12] text-secondary hover:text-primary active:scale-90"
+                    >
+                      <X size={13} strokeWidth={2.5} />
+                    </button>
                   )}
-                </>
-              )}
-            </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeSheet}
+                  className="h-[44px] flex-none rounded-full border border-white/[0.1] bg-white/[0.05] px-3.5 text-[13px] font-semibold text-secondary hover:text-primary active:scale-95"
+                >
+                  Cancel
+                </button>
+              </form>
+
+              {/* Full-Width Scrollable Suggestions List */}
+              <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto pb-4">
+                {value.trim().length === 0 ? (
+                  <div className="flex flex-col items-center justify-center gap-2.5 py-14 text-center">
+                    <span
+                      className="grid size-12 place-items-center rounded-full border border-white/[0.1] bg-white/[0.04]"
+                      style={{ color: 'var(--accent-bright)' }}
+                    >
+                      <Sparkles size={20} />
+                    </span>
+                    <p className="text-[15px] font-semibold text-primary">Find your next track</p>
+                    <p className="max-w-[260px] text-[12.5px] leading-relaxed text-secondary">
+                      Type a song, artist, album, or mood to see instant matches across YouTube Music.
+                    </p>
+                  </div>
+                ) : options.length === 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => submitQuery(value)}
+                    className="flex w-full items-center gap-3 rounded-[16px] border border-white/[0.09] bg-white/[0.04] px-3.5 py-3 text-left transition-colors hover:bg-white/[0.08]"
+                  >
+                    <Search size={16} style={{ color: 'var(--accent-bright)' }} />
+                    <span className="truncate text-[14.5px] font-semibold text-primary">
+                      Search for “{value.trim()}”
+                    </span>
+                  </button>
+                ) : (
+                  <ul className="flex flex-col gap-1" role="listbox">
+                    {options.map((option, idx) => {
+                      if (option.kind === 'query') {
+                        return (
+                          <li key={`q-${option.text}-${idx}`} role="option" aria-selected={false}>
+                            <button
+                              type="button"
+                              onClick={() => pickOption(option)}
+                              className="flex min-h-[48px] w-full items-center gap-3 rounded-[14px] px-3 py-2 text-left transition-colors hover:bg-white/[0.06] active:scale-[0.99] active:bg-white/[0.09]"
+                            >
+                              <Search size={15} className="flex-none text-tertiary" />
+                              <span className="min-w-0 flex-1 truncate text-[14.5px] text-secondary">
+                                <span className="font-semibold text-primary">{option.typed}</span>
+                                <span>{option.rest}</span>
+                              </span>
+                              <ArrowUpRight size={15} className="flex-none text-tertiary" />
+                            </button>
+                          </li>
+                        );
+                      }
+
+                      const item = option.item;
+                      const playable = item.kind === 'song' || item.kind === 'video';
+                      const artistLine = item.artists.map((a) => a.name).join(', ') || item.subtitle || kindLabel(item.kind);
+                      const cleanTitle = cleanTrackTitle(item.title, artistLine);
+                      const isChecked = selecting && playable && selectedTracks.some((t) => t.videoId === item.id);
+
+                      return (
+                        <li key={`i-${item.id}-${idx}`} role="option" aria-selected={isChecked}>
+                          <div
+                            className="flex min-h-[60px] w-full items-center gap-3 rounded-[16px] border border-white/[0.06] bg-white/[0.03] px-2.5 py-2 transition-colors active:bg-white/[0.08]"
+                            style={
+                              isChecked
+                                ? {
+                                    borderColor: 'rgba(var(--accent-rgb), 0.55)',
+                                    backgroundColor: 'rgba(var(--accent-rgb), 0.15)',
+                                  }
+                                : undefined
+                            }
+                          >
+                            <button
+                              type="button"
+                              onClick={() => pickOption(option)}
+                              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            >
+                              <div className="w-[46px] flex-none">
+                                <Artwork
+                                  src={item.thumbnail}
+                                  displayWidth={46}
+                                  radius={item.kind === 'artist' ? '50%' : '10px'}
+                                />
+                              </div>
+                              <div className="flex min-w-0 flex-1 flex-col">
+                                <span className="truncate text-[14.5px] font-semibold leading-tight text-primary">
+                                  {cleanTitle}
+                                </span>
+                                <span className="mt-0.5 truncate text-[12px] text-secondary">{artistLine}</span>
+                              </div>
+                            </button>
+
+                            {playable &&
+                              (selecting ? (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleTrack(toTrack(item))}
+                                  aria-label={isChecked ? `Deselect ${cleanTitle}` : `Select ${cleanTitle}`}
+                                  className="grid size-6 flex-none place-items-center rounded-full border transition-all"
+                                  style={
+                                    isChecked
+                                      ? {
+                                          borderColor: 'var(--accent-hex)',
+                                          backgroundColor: 'var(--accent-hex)',
+                                          boxShadow: '0 0 10px rgba(var(--accent-rgb), 0.5)',
+                                        }
+                                      : { borderColor: 'rgba(255,255,255,0.28)' }
+                                  }
+                                >
+                                  {isChecked && <Check size={13} strokeWidth={3} className="text-white" />}
+                                </button>
+                              ) : (
+                                <TrackMenu
+                                  track={toTrack(item)}
+                                  className="grid size-8 flex-none place-items-center rounded-full text-secondary hover:bg-white/[0.08] hover:text-primary"
+                                />
+                              ))}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
-}
-
-// A suggestion row; hover or keyboard selection paints it in the key colour, white text.
-const optionRow = 'group/option mx-1.5 cursor-default rounded-[3px] data-active:bg-key-bg data-active:text-white';
-const hint = `${optionRow} grid grid-cols-[16px_minmax(0,1fr)] items-center p-1 type-body text-secondary`;
-const lockup = `${optionRow} mt-1.5 grid items-center gap-x-2.5 p-1.5`;
-const lockupCols = 'grid-cols-[46px_minmax(0,1fr)]';
-const lockupMenuCols = 'grid-cols-[46px_minmax(0,1fr)_auto]';
-
-function kindLabel(kind: MusicItem['kind']): string {
-  return { song: 'Song', video: 'Video', album: 'Album', playlist: 'Playlist', 'spotify-playlist': 'Spotify Playlist', artist: 'Artist', episode: 'Episode', podcast: 'Podcast', unknown: '' }[kind];
 }

@@ -78,6 +78,11 @@ const RETRY_STREAMING_SECONDS = 2;
 /** Waiting longer than this for the first audio means the client's stream isn't going to start. */
 const FIRST_AUDIO_TIMEOUT_MS = 15_000;
 
+/** Mid-song stall duration before automatically recovering the stream at the current playhead. */
+const STALL_RECOVERY_MS = 6_000;
+const HEALTH_CHECK_MS = 3_500;
+const MAX_MID_PLAYBACK_RECOVERIES = 3;
+
 function proxyStreamUrl(rawUrl: string): string {
   const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
   return `${base}/api/stream?url=${encodeURIComponent(rawUrl)}`;
@@ -102,6 +107,12 @@ export class YouTubeEngine {
   /** The response the playing track streams from, when it has direct URLs; the video picture comes from it too. */
   private direct: ResolvedPlayer | null = null;
   private preferredCodecs: string[];
+  private stallTimer: number | null = null;
+  private healthInterval: number | null = null;
+  private lastProgressTime = -1;
+  private lastProgressAt = 0;
+  private recoveryVideoId: string | null = null;
+  private recoveryCount = 0;
 
   /** Raised when a track can't be played at all, after every fallback. */
   onFatal: (videoId: string, message: string, permanent: boolean) => void = () => {};
@@ -114,6 +125,124 @@ export class YouTubeEngine {
     // otherwise, which is Safari / iOS.
     const opus = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/webm; codecs="opus"');
     this.preferredCodecs = opus ? ['opus', 'mp4a'] : ['mp4a'];
+    this.bindHealthWatchdog();
+  }
+
+  /**
+   * Watches both direct `<audio src="/api/stream">` and Shaka streams for mid-song
+   * silent stalls, dropped HTTP range connections, or decode errors and seamlessly
+   * recovers playback at the exact current timestamp.
+   */
+  private bindHealthWatchdog(): void {
+    const audio = this.audio;
+    const markProgress = () => {
+      const now = Date.now();
+      if (Math.abs(audio.currentTime - this.lastProgressTime) > 0.02) {
+        this.lastProgressTime = audio.currentTime;
+        this.lastProgressAt = now;
+        this.clearStallTimer();
+      }
+    };
+
+    const armStall = (reason: string) => {
+      if (this.loading || audio.paused || audio.ended || !this.current) return;
+      if (this.stallTimer !== null) return;
+      const frozenAt = audio.currentTime;
+      this.stallTimer = window.setTimeout(() => {
+        this.stallTimer = null;
+        if (this.loading || audio.paused || audio.ended || !this.current) return;
+        if (Math.abs(audio.currentTime - frozenAt) < 0.05) {
+          this.recoverMidPlayback(reason);
+        }
+      }, STALL_RECOVERY_MS);
+    };
+
+    const startHealthLoop = () => {
+      this.lastProgressTime = audio.currentTime;
+      this.lastProgressAt = Date.now();
+      if (this.healthInterval !== null) return;
+      this.healthInterval = window.setInterval(() => {
+        if (this.loading || audio.paused || audio.ended || !this.current) return;
+        if (Math.abs(audio.currentTime - this.lastProgressTime) > 0.02) {
+          this.lastProgressTime = audio.currentTime;
+          this.lastProgressAt = Date.now();
+          return;
+        }
+        if (Date.now() - this.lastProgressAt >= STALL_RECOVERY_MS) {
+          this.recoverMidPlayback('playback froze silently mid-song');
+        }
+      }, HEALTH_CHECK_MS);
+    };
+
+    const stopHealthLoop = () => {
+      this.clearStallTimer();
+      if (this.healthInterval !== null) {
+        clearInterval(this.healthInterval);
+        this.healthInterval = null;
+      }
+    };
+
+    audio.addEventListener('timeupdate', markProgress);
+    audio.addEventListener('playing', () => {
+      markProgress();
+      startHealthLoop();
+    });
+    audio.addEventListener('waiting', () => armStall('audio waiting stall'));
+    audio.addEventListener('stalled', () => armStall('audio stream stalled'));
+    audio.addEventListener('pause', stopHealthLoop);
+    audio.addEventListener('ended', stopHealthLoop);
+    audio.addEventListener('error', () => {
+      if (!this.loading && this.usingNativeAudio && this.current) {
+        const code = audio.error?.code;
+        this.recoverMidPlayback(code ? `native audio error (${code})` : 'native audio error');
+      }
+    });
+  }
+
+  private clearStallTimer(): void {
+    if (this.stallTimer !== null) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
+    }
+  }
+
+  private recoverMidPlayback(reason: string): void {
+    const current = this.current;
+    if (this.loading || !current) return;
+    if (this.recoveryVideoId !== current.videoId) {
+      this.recoveryVideoId = current.videoId;
+      this.recoveryCount = 0;
+    }
+    if (this.recoveryCount >= MAX_MID_PLAYBACK_RECOVERIES) {
+      trackLog.w(`mid-playback recovery limit reached (${reason})`, current.videoId);
+      return;
+    }
+    this.recoveryCount++;
+    this.clearStallTimer();
+    const resumeAt = Math.max(0, this.audio.currentTime);
+    const wasPlaying = !this.audio.paused;
+    trackLog.w(`recovering mid-playback (#${this.recoveryCount}) at ${resumeAt.toFixed(1)}s: ${reason}`, current.videoId);
+
+    // For Shaka/SABR, try one fast in-place streaming retry before switching client.
+    if (!this.usingNativeAudio && this.player && this.recoveryCount === 1) {
+      this.lastProgressAt = Date.now();
+      try {
+        this.player.retryStreaming(0);
+        return;
+      } catch {
+        // Fall through to full client reload below.
+      }
+    }
+
+    this.current = null;
+    excludeClient(current.videoId, current.client, reason, current.signed);
+    this.load(current.videoId, { startSec: resumeAt, autoplay: wasPlaying, hint: this.currentHint ?? undefined })
+      .then((track) => this.onRecovered(track))
+      .catch((failure: unknown) => {
+        if (failure instanceof SupersededError) return;
+        void this.stop();
+        this.onFatal(current.videoId, describe(failure), failure instanceof UnplayableError);
+      });
   }
 
   private async ensurePlayer(): Promise<shaka.Player> {
@@ -164,6 +293,11 @@ export class YouTubeEngine {
   ): Promise<LoadedTrack> {
     const generation = ++this.generation;
     this.loading = true;
+    this.clearStallTimer();
+    if (this.recoveryVideoId !== videoId) {
+      this.recoveryVideoId = videoId;
+      this.recoveryCount = 0;
+    }
     this.currentHint = hint ?? null;
     const started = performance.now();
     trackLog.i(`loading at ${startSec.toFixed(1)}s`, videoId);
@@ -643,6 +777,11 @@ export class YouTubeEngine {
 
   async stop(): Promise<void> {
     this.generation++;
+    this.clearStallTimer();
+    if (this.healthInterval !== null) {
+      clearInterval(this.healthInterval);
+      this.healthInterval = null;
+    }
     this.current = null;
     this.currentHint = null;
     this.direct = null;

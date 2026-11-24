@@ -1,8 +1,9 @@
-import { Activity, Sparkles, Vibrate, Waves } from 'lucide-react';
+import { Activity, Download, Loader2, Sparkles, Vibrate, Waves } from 'lucide-react';
 import { AUTOMIX_BARS } from '@/playback/automix/choices';
 import { triggerHaptic } from '@/lib/haptics';
 import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
+import { useUpdater } from '@/state/updater';
 import { YouTubeIntegration } from './YouTubeIntegration';
 
 type CrossfadeStep = { id: number | 'automix'; label: string; overlapRatio: number };
@@ -155,6 +156,10 @@ export default function SettingsPage() {
   const setDynamicAmbient = useUi((s) => s.setDynamicAmbient);
   const hapticsEnabled = useUi((s) => s.hapticsEnabled);
   const setHapticsEnabled = useUi((s) => s.setHapticsEnabled);
+
+  const currentName = useUpdater((s) => s.currentName);
+  const updatePhase = useUpdater((s) => s.phase);
+  const checkForUpdates = useUpdater((s) => s.checkForUpdates);
 
   const activeCrossfadeId: number | 'automix' = automix ? 'automix' : crossfadeSec;
   const matchedStep =
@@ -341,6 +346,44 @@ export default function SettingsPage() {
             checked={hapticsEnabled}
             onChange={setHapticsEnabled}
           />
+        </div>
+      </section>
+
+      {/* Updates */}
+      <section aria-label="App Updates" className="flex flex-col gap-2">
+        <h2 className="px-1 text-[13px] font-semibold text-secondary">App Updates</h2>
+        <div className="acoustic-glass flex items-center justify-between gap-3 rounded-[20px] px-4 py-3.5">
+          <div className="flex items-center gap-3">
+            <span
+              className="grid size-9 flex-none place-items-center rounded-[12px] border border-white/[0.09] bg-white/[0.04]"
+              style={{ color: 'var(--accent-bright)' }}
+            >
+              <Download size={16} />
+            </span>
+            <div className="flex flex-col">
+              <span className="text-[14px] font-semibold text-primary">Audiophile</span>
+              <span className="font-mono text-[11.5px] text-secondary">Version {currentName}</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={updatePhase === 'checking'}
+            onClick={() => {
+              triggerHaptic('light');
+              void checkForUpdates(true);
+            }}
+            className="inline-flex h-9 flex-none items-center gap-1.5 rounded-full border border-white/[0.12] bg-white/[0.07] px-3.5 text-[12.5px] font-semibold text-primary transition-all hover:bg-white/[0.12] active:scale-95 disabled:opacity-50"
+          >
+            {updatePhase === 'checking' ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                <span>Checking…</span>
+              </>
+            ) : (
+              <span>Check for Updates</span>
+            )}
+          </button>
         </div>
       </section>
     </div>

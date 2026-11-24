@@ -13,6 +13,8 @@ import { useYtAuth, ytAuthSnapshot } from '@/extension/useYtAuth';
 import { queryClient } from '@/lib/queryClient';
 import {
   addToPlaylist,
+  addTracksToPlaylist,
+  createPlaylist,
   fetchAlbum,
   fetchArtist,
   fetchBrowse,
@@ -266,6 +268,35 @@ export function useAddToPlaylist() {
     onSettled: (_data, _error, { playlistId }) => {
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', playlistId] });
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', `VL${playlistId.replace(/^VL/, '')}`] });
+    },
+  });
+}
+
+/** Batch-adds one or more tracks to one or more playlists at once. */
+export function useAddTracksToPlaylists() {
+  return useMutation({
+    mutationFn: async ({ playlistIds, videoIds }: { playlistIds: string[]; videoIds: string[] }) => {
+      await Promise.all(playlistIds.map((playlistId) => addTracksToPlaylist(playlistId, videoIds)));
+    },
+    onSettled: (_data, _error, { playlistIds }) => {
+      for (const playlistId of playlistIds) {
+        void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', playlistId] });
+        void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', `VL${playlistId.replace(/^VL/, '')}`] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library', 'playlists'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library', 'sidebar-playlists'] });
+    },
+  });
+}
+
+/** Creates a brand-new private playlist seeded with [videoIds]. */
+export function useCreatePlaylist() {
+  return useMutation({
+    mutationFn: ({ title, videoIds }: { title: string; videoIds: string[] }) => createPlaylist(title, videoIds),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library', 'playlists'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library', 'sidebar-playlists'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist-options'] });
     },
   });
 }

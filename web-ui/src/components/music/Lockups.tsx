@@ -1,6 +1,8 @@
+import { Check } from 'lucide-react';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { PlayIcon } from '@/components/icons/Transport';
 import type { MusicItem } from '@/data/music/types';
+import { useBatchSelect } from '@/state/batchSelect';
 import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
 import { artistHref, hrefFor } from './links';
@@ -136,22 +138,38 @@ export function CircleLockup({ item, width = 160 }: { item: MusicItem; width?: n
 
 /** A song row inside a shelf (report §2, track lockup): 40px art, title, byline. */
 export function TrackLockup({ item, onPlay }: { item: MusicItem; onPlay?: () => void }) {
-  const play = onPlay ?? (() => playTrack(item));
+  const selecting = useBatchSelect((s) => s.selecting);
+  const selected = useBatchSelect((s) => s.selectedTracks.some((t) => t.videoId === item.id));
+  const toggleTrack = useBatchSelect((s) => s.toggleTrack);
+  const playable = isPlayable(item);
+  const handleTap = () => {
+    if (selecting && playable) {
+      toggleTrack(toTrack(item));
+      return;
+    }
+    if (onPlay) onPlay();
+    else playTrack(item);
+  };
+
   return (
-    // 52px art column (40 + 12 gap), content, menu; 55px tall.
-    <div className="group/track grid h-[55px] grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-x-3 py-[7.5px] pr-3.5 pl-0">
-      <button className="group/art relative w-10 rounded-artwork-sm" aria-label={`Play ${item.title}`} onClick={play}>
+    <div
+      className="group/track grid h-[55px] grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-x-3 rounded-[12px] py-[7.5px] pr-2.5 pl-1 transition-colors"
+      style={selecting && selected ? { backgroundColor: 'rgba(var(--accent-rgb), 0.14)' } : undefined}
+    >
+      <button className="group/art relative w-10 rounded-artwork-sm" aria-label={selecting ? `Select ${item.title}` : `Play ${item.title}`} onClick={handleTap}>
         <Artwork src={item.thumbnail} displayWidth={40} radius="var(--radius-artwork-small)" />
-        <span
-          className="absolute inset-0 grid place-items-center rounded-[inherit] bg-lockup-hover text-white opacity-0 transition-opacity duration-100 ease-in group-hover/track:opacity-100 group-focus-visible/art:opacity-100"
-          aria-hidden="true"
-        >
-          <PlayIcon size={16} />
-        </span>
+        {!selecting && (
+          <span
+            className="absolute inset-0 grid place-items-center rounded-[inherit] bg-lockup-hover text-white opacity-0 transition-opacity duration-100 ease-in group-hover/track:opacity-100 group-focus-visible/art:opacity-100"
+            aria-hidden="true"
+          >
+            <PlayIcon size={16} />
+          </span>
+        )}
       </button>
       <div className="flex min-w-0 flex-col gap-px px-1">
         <div className="flex min-w-0 items-center type-body">
-          <button className="min-w-0 truncate text-left" onClick={play}>
+          <button className="min-w-0 truncate text-left" onClick={handleTap}>
             {item.title}
           </button>
           {item.explicit && <ExplicitBadge />}
@@ -160,15 +178,31 @@ export function TrackLockup({ item, onPlay }: { item: MusicItem; onPlay?: () => 
           <Byline item={item} />
         </div>
       </div>
-      {/* The track row's ⋯ (report §14), at the card's end: revealed on hover
-          or focus, and held visible while its menu is open. The space is
-          always reserved so the title doesn't jump when it appears. */}
-      {isPlayable(item) && (
-        <TrackMenu
-          track={toTrack(item)}
-          className="grid size-7 place-items-center rounded-full text-key opacity-0 transition-opacity duration-100 ease-in group-hover/track:opacity-100 focus-visible:opacity-100 hover:bg-quinary data-open:opacity-100"
-        />
-      )}
+      {playable &&
+        (selecting ? (
+          <button
+            type="button"
+            onClick={handleTap}
+            aria-label={selected ? `Deselect ${item.title}` : `Select ${item.title}`}
+            className="grid size-6 place-items-center rounded-full border transition-all"
+            style={
+              selected
+                ? {
+                    borderColor: 'var(--accent-hex)',
+                    backgroundColor: 'var(--accent-hex)',
+                    boxShadow: '0 0 10px rgba(var(--accent-rgb), 0.45)',
+                  }
+                : { borderColor: 'rgba(255,255,255,0.28)' }
+            }
+          >
+            {selected && <Check size={13} strokeWidth={3} className="text-white" />}
+          </button>
+        ) : (
+          <TrackMenu
+            track={toTrack(item)}
+            className="grid size-8 place-items-center rounded-full text-secondary opacity-80 transition-opacity duration-100 ease-in hover:bg-white/[0.08] hover:text-primary hover:opacity-100 data-open:opacity-100"
+          />
+        ))}
     </div>
   );
 }

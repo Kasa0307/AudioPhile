@@ -1,0 +1,1 @@
+import{S as e}from"./preload-helper-XeGnDlpS.js";var t=e();function n({title:e}){return(0,t.jsx)(`div`,{className:`mx-(--body-gutter) pt-7 pb-1`,children:(0,t.jsx)(`h1`,{className:`type-header-emphasized`,children:e})})}export{n as t};

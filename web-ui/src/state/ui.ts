@@ -34,6 +34,12 @@ interface UiState {
   /** Tactile haptic feedback on Android & mobile controls. */
   hapticsEnabled: boolean;
   setHapticsEnabled: (enabled: boolean) => void;
+  /** Currently open modal/sheet closer (e.g., 3-dot TrackMenu bottom sheet) for Android Back button. */
+  activeMenuClose: (() => void) | null;
+  setActiveMenuClose: (closer: (() => void) | null) => void;
+  /** Centered "Press back again to exit" floating pill visibility. */
+  exitHintVisible: boolean;
+  setExitHintVisible: (visible: boolean) => void;
   /** Extension install banner state (kept for compatibility). */
   drawerOpen: boolean;
   setDrawerOpen: (open: boolean) => void;
@@ -67,6 +73,10 @@ export const useUi = create<UiState>()((set) => ({
     }
     set({ hapticsEnabled });
   },
+  activeMenuClose: null,
+  setActiveMenuClose: (activeMenuClose) => set({ activeMenuClose }),
+  exitHintVisible: false,
+  setExitHintVisible: (exitHintVisible) => set({ exitHintVisible }),
   drawerOpen: false,
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
   installBannerDismissed: sessionStorage.getItem(BANNER_KEY) === '1',

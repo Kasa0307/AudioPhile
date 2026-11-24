@@ -4,12 +4,14 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Message;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
@@ -37,15 +39,27 @@ import androidx.browser.customtabs.CustomTabColorSchemeParams;
 import androidx.browser.customtabs.CustomTabsIntent;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
+import org.json.JSONObject;
+
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
     private static final String APP_URL = "https://ren-62c.pages.dev/home";
@@ -56,6 +70,9 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout offlineView;
     private int topCutoutDp = 0;
     private boolean pageLoaded = false;
+    private long lastBackPressMs = 0L;
+    private final ExecutorService updaterExecutor = Executors.newSingleThreadExecutor();
+    private volatile boolean isDownloadingUpdate = false;
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
     @Override
@@ -223,11 +240,38 @@ public class MainActivity extends AppCompatActivity {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (webView.canGoBack()) {
+                if (webView != null && pageLoaded) {
+                    webView.evaluateJavascript(
+                            "(function(){ return window.__audiophileHandleBack ? window.__audiophileHandleBack() : 'fallback'; })()",
+                            result -> {
+                                String res = result != null ? result.replace("\"", "").trim() : "";
+                                if ("handled".equals(res)) {
+                                    lastBackPressMs = 0L;
+                                    return;
+                                }
+                                if ("fallback".equals(res) && webView.canGoBack()) {
+                                    webView.goBack();
+                                    return;
+                                }
+                                long now = System.currentTimeMillis();
+                                if (now - lastBackPressMs <= 2000L) {
+                                    lastBackPressMs = 0L;
+                                    moveTaskToBack(true);
+                                } else {
+                                    lastBackPressMs = now;
+                                    webView.evaluateJavascript(
+                                            "window.__audiophileShowExitHint && window.__audiophileShowExitHint();",
+                                            null
+                                    );
+                                }
+                            }
+                    );
+                    return;
+                }
+                if (webView != null && webView.canGoBack()) {
                     webView.goBack();
                 } else {
-                    setEnabled(false);
-                    getOnBackPressedDispatcher().onBackPressed();
+                    moveTaskToBack(true);
                 }
             }
         });
@@ -366,6 +410,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        updaterExecutor.shutdownNow();
         MediaPlaybackService.setCommandListener(null);
         stopService(new Intent(this, MediaPlaybackService.class));
         if (webView != null) {
@@ -455,6 +500,74 @@ public class MainActivity extends AppCompatActivity {
         return layout;
     }
 
+    private void emitUpdateProgress(int percent, String status, String message) {
+        runOnUiThread(() -> {
+            if (webView == null) return;
+            String safeMsg = JSONObject.quote(message != null ? message : "");
+            String safeStatus = JSONObject.quote(status != null ? status : "");
+            String js = "window.__audiophileUpdateProgress && window.__audiophileUpdateProgress("
+                    + percent + "," + safeStatus + "," + safeMsg + ");";
+            webView.evaluateJavascript(js, null);
+        });
+    }
+
+    private void emitUpdateManifest(String rawJson, String error) {
+        runOnUiThread(() -> {
+            if (webView == null) return;
+            String argJson = rawJson != null ? JSONObject.quote(rawJson) : "null";
+            String argErr = error != null ? JSONObject.quote(error) : "null";
+            String js = "window.__audiophileUpdateManifest && window.__audiophileUpdateManifest("
+                    + argJson + "," + argErr + ");";
+            webView.evaluateJavascript(js, null);
+        });
+    }
+
+    private HttpURLConnection openWithRedirects(String rawUrl) throws Exception {
+        String current = rawUrl;
+        for (int hops = 0; hops < 6; hops++) {
+            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
+            conn.setInstanceFollowRedirects(false);
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(30000);
+            conn.setRequestProperty("User-Agent", "Audiophile-Android");
+            conn.setRequestProperty("Cache-Control", "no-cache");
+            int code = conn.getResponseCode();
+            if (code == HttpURLConnection.HTTP_MOVED_PERM
+                    || code == HttpURLConnection.HTTP_MOVED_TEMP
+                    || code == HttpURLConnection.HTTP_SEE_OTHER
+                    || code == 307
+                    || code == 308) {
+                String loc = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (loc == null || loc.isEmpty()) {
+                    throw new Exception("Redirect missing Location header");
+                }
+                current = new URL(new URL(current), loc).toString();
+                continue;
+            }
+            return conn;
+        }
+        throw new Exception("Too many redirects");
+    }
+
+    private void launchApkInstaller(File apkFile) {
+        runOnUiThread(() -> {
+            try {
+                Uri contentUri = FileProvider.getUriForFile(
+                        MainActivity.this,
+                        getPackageName() + ".fileprovider",
+                        apkFile
+                );
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(contentUri, "application/vnd.android.package-archive");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+            } catch (Exception e) {
+                emitUpdateProgress(0, "error", "Installer failed: " + e.getMessage());
+            }
+        });
+    }
+
     /**
      * JavaScript -> Native Android bridge called by src/state/player.ts whenever
      * track metadata or playback state changes.
@@ -523,6 +636,157 @@ public class MainActivity extends AppCompatActivity {
                     feedback = HapticFeedbackConstants.LONG_PRESS;
                 }
                 webView.performHapticFeedback(feedback);
+            });
+        }
+
+        @JavascriptInterface
+        public int getAppVersionCode() {
+            try {
+                PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    return (int) info.getLongVersionCode();
+                }
+                return info.versionCode;
+            } catch (Exception e) {
+                return 1;
+            }
+        }
+
+        @JavascriptInterface
+        public String getAppVersionName() {
+            try {
+                PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+                return info.versionName != null ? info.versionName : "1.0.0";
+            } catch (Exception e) {
+                return "1.0.0";
+            }
+        }
+
+        @JavascriptInterface
+        public boolean canInstallPackages() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                return getPackageManager().canRequestPackageInstalls();
+            }
+            return true;
+        }
+
+        @JavascriptInterface
+        public void openInstallPermissionSettings() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        Intent intent = new Intent(
+                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                Uri.parse("package:" + getPackageName())
+                        );
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void fetchUpdateManifest(String manifestUrl) {
+            if (manifestUrl == null || manifestUrl.trim().isEmpty()) {
+                emitUpdateManifest(null, "Missing update manifest URL");
+                return;
+            }
+            updaterExecutor.execute(() -> {
+                HttpURLConnection conn = null;
+                try {
+                    conn = openWithRedirects(manifestUrl.trim());
+                    int code = conn.getResponseCode();
+                    if (code < 200 || code >= 300) {
+                        emitUpdateManifest(null, "HTTP " + code);
+                        return;
+                    }
+                    try (InputStream in = new BufferedInputStream(conn.getInputStream());
+                         ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                        byte[] buf = new byte[4096];
+                        int n;
+                        while ((n = in.read(buf)) != -1) {
+                            out.write(buf, 0, n);
+                        }
+                        emitUpdateManifest(out.toString(StandardCharsets.UTF_8.name()), null);
+                    }
+                } catch (Exception e) {
+                    emitUpdateManifest(null, e.getMessage() != null ? e.getMessage() : "Network error");
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void downloadAndInstallUpdate(String apkUrl) {
+            if (apkUrl == null || apkUrl.trim().isEmpty()) {
+                emitUpdateProgress(0, "error", "Invalid APK URL");
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
+                emitUpdateProgress(0, "permission_needed", "Enable 'Install unknown apps' for Audiophile, then tap Update again.");
+                openInstallPermissionSettings();
+                return;
+            }
+            if (isDownloadingUpdate) return;
+            isDownloadingUpdate = true;
+            emitUpdateProgress(0, "downloading", "Connecting…");
+
+            updaterExecutor.execute(() -> {
+                HttpURLConnection conn = null;
+                try {
+                    conn = openWithRedirects(apkUrl.trim());
+                    int code = conn.getResponseCode();
+                    if (code < 200 || code >= 300) {
+                        emitUpdateProgress(0, "error", "Download failed (HTTP " + code + ")");
+                        return;
+                    }
+                    long totalBytes = conn.getContentLengthLong();
+                    File updatesDir = new File(getCacheDir(), "updates");
+                    if (!updatesDir.exists()) {
+                        updatesDir.mkdirs();
+                    }
+                    File apkFile = new File(updatesDir, "audiophile-update.apk");
+                    if (apkFile.exists()) {
+                        apkFile.delete();
+                    }
+
+                    try (InputStream in = new BufferedInputStream(conn.getInputStream());
+                         FileOutputStream fos = new FileOutputStream(apkFile)) {
+                        byte[] buffer = new byte[16384];
+                        long downloaded = 0;
+                        int lastPct = -1;
+                        int read;
+                        while ((read = in.read(buffer)) != -1) {
+                            fos.write(buffer, 0, read);
+                            downloaded += read;
+                            if (totalBytes > 0) {
+                                int pct = (int) Math.min(100, (downloaded * 100L) / totalBytes);
+                                if (pct != lastPct) {
+                                    lastPct = pct;
+                                    String mb = String.format(java.util.Locale.US, "%.1f / %.1f MB",
+                                            downloaded / (1024.0 * 1024.0), totalBytes / (1024.0 * 1024.0));
+                                    emitUpdateProgress(pct, "downloading", mb);
+                                }
+                            } else {
+                                String mb = String.format(java.util.Locale.US, "%.1f MB downloaded",
+                                        downloaded / (1024.0 * 1024.0));
+                                emitUpdateProgress(50, "downloading", mb);
+                            }
+                        }
+                        fos.flush();
+                    }
+
+                    emitUpdateProgress(100, "installing", "Opening Android installer…");
+                    launchApkInstaller(apkFile);
+                } catch (Exception e) {
+                    emitUpdateProgress(0, "error", e.getMessage() != null ? e.getMessage() : "Download failed");
+                } finally {
+                    isDownloadingUpdate = false;
+                    if (conn != null) conn.disconnect();
+                }
             });
         }
     }

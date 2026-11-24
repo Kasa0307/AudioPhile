@@ -187,19 +187,28 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
     const clock = new LyricClock(audio.currentTime * 1000);
     let discontinuity = 0;
     let frame = 0;
-    const tick = () => {
-      const now = performance.now();
-      // The reading and its stamp are taken together.
-      el.currentTime = clock.frame(now, Math.trunc(audio.currentTime * 1000), now, discontinuity);
-      frame = requestAnimationFrame(tick);
-    };
     const hold = () => {
       cancelAnimationFrame(frame);
       const ms = audio.currentTime * 1000;
       clock.hold(ms, performance.now());
       el.currentTime = ms;
     };
+    const tick = () => {
+      // Never extrapolate lyrics forward while audio is paused, waiting, or starved of media data.
+      if (audio.paused || audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        hold();
+        return;
+      }
+      const now = performance.now();
+      // The reading and its stamp are taken together.
+      el.currentTime = clock.frame(now, Math.trunc(audio.currentTime * 1000), now, discontinuity);
+      frame = requestAnimationFrame(tick);
+    };
     const resume = () => {
+      if (audio.paused || audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        hold();
+        return;
+      }
       cancelAnimationFrame(frame);
       clock.restart();
       frame = requestAnimationFrame(tick);
@@ -211,15 +220,23 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
     audio.addEventListener('seeking', onSeeking);
     audio.addEventListener('seeked', onSeeking);
     audio.addEventListener('pause', hold);
+    audio.addEventListener('waiting', hold);
+    audio.addEventListener('stalled', hold);
+    audio.addEventListener('error', hold);
     audio.addEventListener('play', resume);
-    if (audio.paused) hold();
+    audio.addEventListener('playing', resume);
+    if (audio.paused || audio.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) hold();
     else resume();
     return () => {
       cancelAnimationFrame(frame);
       audio.removeEventListener('seeking', onSeeking);
       audio.removeEventListener('seeked', onSeeking);
       audio.removeEventListener('pause', hold);
+      audio.removeEventListener('waiting', hold);
+      audio.removeEventListener('stalled', hold);
+      audio.removeEventListener('error', hold);
       audio.removeEventListener('play', resume);
+      audio.removeEventListener('playing', resume);
     };
   }, [deck, videoId, ttml, mixing]);
 

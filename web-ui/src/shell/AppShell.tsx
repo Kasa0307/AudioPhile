@@ -1,15 +1,22 @@
-import { lazy, Suspense, useEffect } from 'react';
-import { Outlet } from 'react-router';
+import { lazy, Suspense, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router';
+import { BatchSelectionBar } from '@/components/music/BatchSelectionBar';
+import { MultiPlaylistSheet } from '@/components/music/MultiPlaylistSheet';
 import { useDynamicThemeSync } from '@/lib/dynamicAccent';
+import { triggerHaptic } from '@/lib/haptics';
 import { resumeSession } from '@/party/listenTogether';
 import { startPartySync } from '@/party/partySync';
 import { startLivePresence } from '@/playback/livePresence';
+import { useBatchSelect } from '@/state/batchSelect';
 import { useUi } from '@/state/ui';
+import { useUpdater } from '@/state/updater';
 import { AppTopBar } from './AppTopBar';
 import { OwnerCreditPopup } from './OwnerCreditPopup';
 import { PlayerBar } from './PlayerBar';
 import { SidePanel } from './SidePanel';
 import { UnifiedSonicDock } from './UnifiedSonicDock';
+import { UpdateModal } from './UpdateModal';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 
 // It carries am-lyrics; loaded the first time it opens, as the side panel's lyrics are.
@@ -35,6 +42,85 @@ export function AppShell() {
 
   const fullScreen = useUi((s) => s.fullScreen);
   const mobileConsoleOpen = useUi((s) => s.mobileConsoleOpen);
+  const exitHintVisible = useUi((s) => s.exitHintVisible);
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const exitTimer = useRef<number | null>(null);
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+
+  useEffect(() => {
+    const w = window as unknown as {
+      __audiophileHandleBack?: () => 'handled' | 'at_root';
+      __audiophileShowExitHint?: () => void;
+    };
+
+    w.__audiophileHandleBack = () => {
+      const updater = useUpdater.getState();
+      const batch = useBatchSelect.getState();
+      const ui = useUi.getState();
+
+      // 0. Update modal (if not actively downloading)
+      if (updater.modalOpen) {
+        if (updater.phase !== 'downloading') updater.dismissModal();
+        return 'handled';
+      }
+      // 1. Multi-Playlist bottom sheet
+      if (batch.pickerOpen) {
+        triggerHaptic('light');
+        batch.closePlaylistPicker();
+        return 'handled';
+      }
+      // 2. 3-dot TrackMenu bottom sheet
+      if (ui.activeMenuClose) {
+        triggerHaptic('light');
+        ui.activeMenuClose();
+        return 'handled';
+      }
+      // 3. Cinema Stage (Expand) full-screen player -> back to Lyrics / Now Playing
+      if (ui.fullScreen) {
+        triggerHaptic('light');
+        ui.setFullScreen(false);
+        return 'handled';
+      }
+      // 4. Now Playing / Lyrics sheet -> back to Home / active screen
+      if (ui.mobileConsoleOpen) {
+        triggerHaptic('light');
+        ui.setMobileConsoleOpen(false);
+        return 'handled';
+      }
+      // 5. Multi-Select batch mode
+      if (batch.selecting) {
+        batch.stopSelecting();
+        return 'handled';
+      }
+      // 6. Any secondary route (Explore, Search, Library, Settings, Album, Playlist, Artist) -> back or Home
+      const cur = pathnameRef.current;
+      if (cur !== '/' && cur !== '/home') {
+        triggerHaptic('light');
+        if (window.history.length > 1) navigate(-1);
+        else navigate('/home', { replace: true });
+        return 'handled';
+      }
+      return 'at_root';
+    };
+
+    w.__audiophileShowExitHint = () => {
+      triggerHaptic('light');
+      useUi.getState().setExitHintVisible(true);
+      if (exitTimer.current !== null) clearTimeout(exitTimer.current);
+      exitTimer.current = window.setTimeout(() => {
+        exitTimer.current = null;
+        useUi.getState().setExitHintVisible(false);
+      }, 2000);
+    };
+
+    return () => {
+      delete w.__audiophileHandleBack;
+      delete w.__audiophileShowExitHint;
+      if (exitTimer.current !== null) clearTimeout(exitTimer.current);
+    };
+  }, [navigate]);
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-[#07090f]">
@@ -77,9 +163,25 @@ export function AppShell() {
           </div>
         </main>
 
+        <BatchSelectionBar />
         <UnifiedSonicDock />
       </div>
 
+      <MultiPlaylistSheet />
+      <UpdateModal />
+      {exitHintVisible &&
+        createPortal(
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none fixed inset-0 z-[10090] grid place-items-center px-6"
+          >
+            <div className="animate-sheet-up rounded-full border border-white/[0.14] bg-[#0b101d]/92 px-4 py-2 text-[13px] font-medium text-white shadow-[0_14px_38px_rgba(0,0,0,0.72)] backdrop-blur-2xl">
+              Press back again to exit
+            </div>
+          </div>,
+          document.body,
+        )}
       {fullScreen && (
         <Suspense fallback={null}>
           <FullScreenPlayer />

@@ -1,0 +1,13 @@
+{
+  "versionCode": 3,
+  "versionName": "2.1.0",
+  "apkUrl": "https://raw.githubusercontent.com/Kasa0307/AudioPhile/main/Audiophile.apk",
+  "releaseDate": "2026-11-24",
+  "changelogs": [
+    "Large Acoustic Glass slide-up menu for track options & multi-playlist picker",
+    "Multi-Select mode across Home & Search to batch-add songs at once",
+    "Full-width slide-up Search suggestions sheet",
+    "Smart Android Back navigation & double-back exit confirmation",
+    "Mid-song audio stall auto-recovery & built-in In-App Updater"
+  ]
+}

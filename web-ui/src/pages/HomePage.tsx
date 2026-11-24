@@ -1,4 +1,4 @@
-import { ChevronRight, Play, Shuffle } from 'lucide-react';
+import { Check, ChevronRight, Play, Shuffle } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { browseHref, hrefFor } from '@/components/music/links';
@@ -13,7 +13,28 @@ import { triggerHaptic } from '@/lib/haptics';
 import { buildWaveform } from '@/shell/WaveformScrubber';
 import { HomeSkeleton } from '@/skeletons/PageSkeletons';
 import { ShelfSkeleton } from '@/skeletons/ShelfSkeleton';
+import { useBatchSelect } from '@/state/batchSelect';
 import { usePlayer } from '@/state/player';
+
+function SelectBadge({ checked }: { checked: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="grid size-6 flex-none place-items-center rounded-full border transition-all duration-150"
+      style={
+        checked
+          ? {
+              borderColor: 'var(--accent-hex)',
+              backgroundColor: 'var(--accent-hex)',
+              boxShadow: '0 0 12px rgba(var(--accent-rgb), 0.5)',
+            }
+          : { borderColor: 'rgba(255,255,255,0.28)', backgroundColor: 'rgba(7,9,15,0.45)' }
+      }
+    >
+      {checked && <Check size={13} strokeWidth={3} className="text-white" />}
+    </span>
+  );
+}
 
 const RECENT_TITLE = 'Recently Played';
 const RECENT_LIMIT = 14;
@@ -248,6 +269,10 @@ function QuickPicksEditorialDeck({
   playingId: string | null;
   isPlaying: boolean;
 }) {
+  const selecting = useBatchSelect((s) => s.selecting);
+  const selectedTracks = useBatchSelect((s) => s.selectedTracks);
+  const toggleTrack = useBatchSelect((s) => s.toggleTrack);
+
   const pages: MusicItem[][] = [];
   for (let i = 0; i < shelf.items.length; i += 3) {
     pages.push(shelf.items.slice(i, i + 3));
@@ -273,6 +298,7 @@ function QuickPicksEditorialDeck({
               const artist = item.artists.map((a) => a.name).filter(Boolean).join(', ') || item.subtitle;
               const title = cleanTrackTitle(item.title, artist);
               const active = playingId === item.id;
+              const checked = selecting && selectedTracks.some((t) => t.videoId === item.id);
               const dur = formatDuration(item.durationSec);
 
               return (
@@ -280,15 +306,23 @@ function QuickPicksEditorialDeck({
                   key={`${item.id}-${num}`}
                   type="button"
                   onClick={() => {
+                    if (selecting) {
+                      toggleTrack(toTrack(item));
+                      return;
+                    }
                     triggerHaptic('light');
                     playTrack(item);
                   }}
                   className="group flex w-full items-center gap-3 rounded-[14px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.06] active:scale-[0.99]"
-                  style={active ? { backgroundColor: 'rgba(var(--accent-rgb), 0.14)' } : undefined}
+                  style={
+                    checked || (!selecting && active)
+                      ? { backgroundColor: 'rgba(var(--accent-rgb), 0.14)' }
+                      : undefined
+                  }
                 >
                   <span
                     className="w-5 flex-none font-mono text-[11px] font-semibold tabular-nums"
-                    style={{ color: active ? 'var(--accent-bright)' : 'var(--systemTertiary)' }}
+                    style={{ color: checked || active ? 'var(--accent-bright)' : 'var(--systemTertiary)' }}
                   >
                     {pad2(num)}
                   </span>
@@ -308,14 +342,16 @@ function QuickPicksEditorialDeck({
                   <div className="flex min-w-0 flex-1 flex-col">
                     <span
                       className="truncate text-[14px] font-semibold leading-tight"
-                      style={{ color: active ? 'var(--accent-bright)' : 'var(--systemPrimary)' }}
+                      style={{ color: !selecting && active ? 'var(--accent-bright)' : 'var(--systemPrimary)' }}
                     >
                       {title}
                     </span>
                     <span className="mt-0.5 truncate text-[12px] text-secondary">{artist}</span>
                   </div>
 
-                  {active && isPlaying ? (
+                  {selecting ? (
+                    <SelectBadge checked={checked} />
+                  ) : active && isPlaying ? (
                     <ActiveEq />
                   ) : dur ? (
                     <span className="flex-none font-mono text-[11px] text-tertiary tabular-nums">{dur}</span>
@@ -345,6 +381,10 @@ function CuratedBentoShelf({
   playingId: string | null;
   isPlaying: boolean;
 }) {
+  const selecting = useBatchSelect((s) => s.selecting);
+  const selectedTracks = useBatchSelect((s) => s.selectedTracks);
+  const toggleTrack = useBatchSelect((s) => s.toggleTrack);
+
   const clusters: MusicItem[][] = [];
   for (let i = 0; i < shelf.items.length; i += 4) {
     const chunk = shelf.items.slice(i, i + 4);
@@ -368,6 +408,7 @@ function CuratedBentoShelf({
           const leadTitle = cleanTrackTitle(lead.title, leadArtist);
           const leadHref = hrefFor(lead);
           const leadPlayable = lead.kind === 'song' || lead.kind === 'video';
+          const leadChecked = selecting && leadPlayable && selectedTracks.some((t) => t.videoId === lead.id);
 
           const leadCardContent = (
             <div className="relative flex h-full flex-col justify-end overflow-hidden rounded-[16px] bg-[#12192a] ring-1 ring-white/12">
@@ -381,6 +422,11 @@ function CuratedBentoShelf({
                 />
               )}
               <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(7,9,15,0.92)_12%,rgba(7,9,15,0.28)_60%,transparent)]" />
+              {selecting && leadPlayable && (
+                <div className="absolute top-2 right-2 z-2">
+                  <SelectBadge checked={leadChecked} />
+                </div>
+              )}
               <div className="relative z-1 flex flex-col p-2.5">
                 <span className="line-clamp-2 text-[13.5px] font-bold leading-snug text-white">
                   {leadTitle}
@@ -399,6 +445,10 @@ function CuratedBentoShelf({
                 <button
                   type="button"
                   onClick={() => {
+                    if (selecting && leadPlayable) {
+                      toggleTrack(toTrack(lead));
+                      return;
+                    }
                     triggerHaptic('light');
                     playTrack(lead);
                   }}
@@ -419,6 +469,7 @@ function CuratedBentoShelf({
                   const active = playingId === item.id;
                   const itemHref = hrefFor(item);
                   const isPlayable = item.kind === 'song' || item.kind === 'video';
+                  const checked = selecting && isPlayable && selectedTracks.some((t) => t.videoId === item.id);
 
                   const inner = (
                     <>
@@ -436,13 +487,17 @@ function CuratedBentoShelf({
                       <div className="flex min-w-0 flex-1 flex-col">
                         <span
                           className="truncate text-[12.5px] font-semibold leading-tight"
-                          style={{ color: active ? 'var(--accent-bright)' : 'var(--systemPrimary)' }}
+                          style={{ color: !selecting && active ? 'var(--accent-bright)' : 'var(--systemPrimary)' }}
                         >
                           {title}
                         </span>
                         <span className="mt-0.5 truncate text-[11px] text-secondary">{artist}</span>
                       </div>
-                      {active && isPlaying && <ActiveEq />}
+                      {selecting && isPlayable ? (
+                        <SelectBadge checked={checked} />
+                      ) : active && isPlaying ? (
+                        <ActiveEq />
+                      ) : null}
                     </>
                   );
 
@@ -451,10 +506,15 @@ function CuratedBentoShelf({
                       key={`${item.id}-${rIdx}`}
                       type="button"
                       onClick={() => {
+                        if (selecting && isPlayable) {
+                          toggleTrack(toTrack(item));
+                          return;
+                        }
                         triggerHaptic('light');
                         playTrack(item);
                       }}
                       className="flex items-center gap-2 rounded-[12px] bg-white/[0.04] p-1.5 text-left transition-colors hover:bg-white/[0.08] active:scale-[0.98]"
+                      style={checked ? { backgroundColor: 'rgba(var(--accent-rgb), 0.16)' } : undefined}
                     >
                       {inner}
                     </button>
@@ -584,6 +644,10 @@ function RecentlyPlayedStrip({
   playingId: string | null;
   isPlaying: boolean;
 }) {
+  const selecting = useBatchSelect((s) => s.selecting);
+  const selectedTracks = useBatchSelect((s) => s.selectedTracks);
+  const toggleTrack = useBatchSelect((s) => s.toggleTrack);
+
   if (!tracks.length) return null;
   return (
     <section aria-label={RECENT_TITLE} className="pb-6">
@@ -598,16 +662,21 @@ function RecentlyPlayedStrip({
           const artist = track.artists.map((a) => a.name).filter(Boolean).join(', ');
           const title = cleanTrackTitle(track.title, artist);
           const active = playingId === track.videoId;
+          const checked = selecting && selectedTracks.some((t) => t.videoId === track.videoId);
           return (
             <button
               key={track.videoId}
               type="button"
               onClick={() => {
+                if (selecting) {
+                  toggleTrack(track);
+                  return;
+                }
                 triggerHaptic('light');
                 playTrack(track, null, RECENT_SOURCE);
               }}
               className="acoustic-glass flex w-[188px] flex-none snap-start items-center gap-2.5 rounded-[16px] p-2 text-left transition-transform active:scale-[0.96]"
-              style={active ? { borderColor: 'rgba(var(--accent-rgb), 0.5)' } : undefined}
+              style={checked || active ? { borderColor: 'rgba(var(--accent-rgb), 0.55)' } : undefined}
             >
               <div className="size-11 flex-none overflow-hidden rounded-[10px] bg-white/[0.06] ring-1 ring-white/12">
                 {track.thumbnail && (
@@ -623,13 +692,13 @@ function RecentlyPlayedStrip({
               <div className="flex min-w-0 flex-1 flex-col">
                 <span
                   className="truncate text-[13px] font-semibold leading-tight"
-                  style={{ color: active ? 'var(--accent-bright)' : 'var(--systemPrimary)' }}
+                  style={{ color: !selecting && active ? 'var(--accent-bright)' : 'var(--systemPrimary)' }}
                 >
                   {title}
                 </span>
                 <span className="mt-0.5 truncate text-[11px] text-secondary">{artist || 'Track'}</span>
               </div>
-              {active && isPlaying && <ActiveEq />}
+              {selecting ? <SelectBadge checked={checked} /> : active && isPlaying ? <ActiveEq /> : null}
             </button>
           );
         })}

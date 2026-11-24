@@ -205,6 +205,14 @@ function getDecks(): Promise<Deck[]> {
       return deck;
     });
     applyVolumes();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          const { status } = usePlayer.getState();
+          if (status === 'playing' || status === 'buffering') ensureAudioOutputActive();
+        }
+      });
+    }
     // For browser-driven tests: the elements aren't in the DOM.
     if (import.meta.env.DEV) Object.defineProperty(window, '__bcAudio', { get: getAudio, configurable: true });
     return decks;
@@ -220,12 +228,35 @@ function applyVolumes() {
     const now = graph.ctx.currentTime;
     graph.master.gain.setTargetAtTime(level, now, 0.015);
     (decks ?? []).forEach((deck, n) => {
+      deck.audio.muted = false;
       deck.audio.volume = 1;
       graph!.decks[n]!.fader.gain.setTargetAtTime(deck.gain, now, 0.015);
     });
     return;
   }
-  for (const deck of decks ?? []) deck.audio.volume = level * deck.gain;
+  for (const deck of decks ?? []) {
+    deck.audio.muted = false;
+    deck.audio.volume = level * deck.gain;
+  }
+}
+
+/**
+ * Prevents silent playback while currentTime & lyrics keep running:
+ * 1) Resumes a suspended/interrupted Web Audio context (common on Android WebView after notifications/focus changes).
+ * 2) Guarantees the active deck's gain isn't stuck at 0 outside an active crossfade.
+ */
+function ensureAudioOutputActive() {
+  if (graph && graph.ctx.state !== 'running') {
+    void graph.ctx.resume().catch(() => {});
+  }
+  const front = decks?.[active];
+  if (front && !fade && !holding) {
+    if (front.gain < 0.99 || front.audio.muted) {
+      front.gain = 1;
+      front.audio.muted = false;
+      applyVolumes();
+    }
+  }
 }
 
 // ---- AutoMix (playback/automix): the two decks routed through Web Audio, mixed like a DJ ----
@@ -294,6 +325,12 @@ function ensureAutomix(): Promise<AutomixGraph | null> {
       (snap) => usePlayer.setState({ automixState: snap }),
     );
     graph = built;
+    built.ctx.addEventListener('statechange', () => {
+      const { status } = usePlayer.getState();
+      if (built.ctx.state !== 'running' && (status === 'playing' || status === 'buffering')) {
+        void built.ctx.resume().catch(() => {});
+      }
+    });
     applyVolumes();
     if (import.meta.env.DEV) Object.assign(window, { __bcAutomix: built, __bcAnalyzer: analyzer });
     return built;
@@ -708,6 +745,7 @@ async function startAt(at: number, { startSec = 0, auto = false, autoplay = true
     all[1 - active]!.engine.stop().catch(() => {});
     deck.gain = 1;
     applyVolumes();
+    ensureAudioOutputActive();
     const track = await deck.engine.load(entry.track.videoId, {
       startSec,
       autoplay,
@@ -1018,11 +1056,17 @@ function bindElement(deck: Deck, n: number) {
     if (usePlayer.getState().status === 'error' && status !== 'playing') return;
     usePlayer.setState({ status });
   };
-  element.addEventListener('playing', () => set('playing'));
+  element.addEventListener('playing', () => {
+    if (inFront()) ensureAudioOutputActive();
+    set('playing');
+  });
   element.addEventListener('pause', () => {
     if (!element.ended) set('paused');
   });
   element.addEventListener('waiting', () => set('buffering'));
+  element.addEventListener('stalled', () => {
+    if (inFront() && !element.paused && !element.ended) set('buffering');
+  });
   element.addEventListener('ended', () => {
     if (!inFront() || holding) return;
     endedListeners.forEach((listener) => listener());
@@ -1051,6 +1095,7 @@ function bindElement(deck: Deck, n: number) {
   }
   element.addEventListener('play', () => {
     if (inFront()) {
+      ensureAudioOutputActive();
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
       syncAndroidPlaybackState();
     }

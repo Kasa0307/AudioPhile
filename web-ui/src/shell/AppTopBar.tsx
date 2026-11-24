@@ -1,8 +1,10 @@
-import { Settings } from 'lucide-react';
+import { ListChecks, Settings, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router';
 import { PrefetchLink, PrefetchNavLink } from '@/components/PrefetchLink';
+import { useSignedIn } from '@/data/music/queries';
 import { triggerHaptic } from '@/lib/haptics';
+import { useBatchSelect } from '@/state/batchSelect';
 import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
 
@@ -25,8 +27,11 @@ function titleForPath(pathname: string): string {
  */
 export function AppTopBar() {
   const { pathname } = useLocation();
+  const signedIn = useSignedIn();
   const status = usePlayer((s) => s.status);
   const setMobileConsoleOpen = useUi((s) => s.setMobileConsoleOpen);
+  const selecting = useBatchSelect((s) => s.selecting);
+  const { startSelecting, stopSelecting } = useBatchSelect.getState();
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -88,27 +93,51 @@ export function AppTopBar() {
         </span>
       </PrefetchLink>
 
-      {/* Right: Single Minimal Circular Glass Settings Button */}
-      <PrefetchNavLink
-        to="/settings"
-        onClick={() => {
-          triggerHaptic('light');
-          setMobileConsoleOpen(false);
-        }}
-        aria-label="Settings"
-        className="grid size-9 flex-none place-items-center rounded-full border border-white/[0.11] bg-[#101626]/72 text-secondary shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_6px_18px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-all duration-150 hover:text-primary active:scale-92"
-        style={
-          onSettings
-            ? {
-                borderColor: 'rgba(var(--accent-rgb), 0.55)',
-                backgroundColor: 'rgba(var(--accent-rgb), 0.2)',
-                color: 'var(--accent-bright)',
-              }
-            : undefined
-        }
-      >
-        <Settings size={16} strokeWidth={2} />
-      </PrefetchNavLink>
+      {/* Right: Optional Multi-Select trigger (Home/Search when signed in) + Minimal Settings Button */}
+      <div className="flex flex-none items-center gap-2">
+        {signedIn && (pathname === '/' || pathname.startsWith('/home') || pathname.startsWith('/search') || selecting) && (
+          <button
+            type="button"
+            onClick={() => (selecting ? stopSelecting() : startSelecting())}
+            aria-label={selecting ? 'Cancel multi-select' : 'Select multiple songs for playlists'}
+            aria-pressed={selecting}
+            className="grid size-9 flex-none place-items-center rounded-full border border-white/[0.11] bg-[#101626]/72 text-secondary shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_6px_18px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-all duration-150 hover:text-primary active:scale-92"
+            style={
+              selecting
+                ? {
+                    borderColor: 'rgba(var(--accent-rgb), 0.65)',
+                    backgroundColor: 'rgba(var(--accent-rgb), 0.24)',
+                    color: 'var(--accent-bright)',
+                    boxShadow: '0 0 16px rgba(var(--accent-rgb), 0.35)',
+                  }
+                : undefined
+            }
+          >
+            {selecting ? <X size={16} strokeWidth={2.2} /> : <ListChecks size={16} strokeWidth={2} />}
+          </button>
+        )}
+
+        <PrefetchNavLink
+          to="/settings"
+          onClick={() => {
+            triggerHaptic('light');
+            setMobileConsoleOpen(false);
+          }}
+          aria-label="Settings"
+          className="grid size-9 flex-none place-items-center rounded-full border border-white/[0.11] bg-[#101626]/72 text-secondary shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_6px_18px_rgba(0,0,0,0.32)] backdrop-blur-xl transition-all duration-150 hover:text-primary active:scale-92"
+          style={
+            onSettings
+              ? {
+                  borderColor: 'rgba(var(--accent-rgb), 0.55)',
+                  backgroundColor: 'rgba(var(--accent-rgb), 0.2)',
+                  color: 'var(--accent-bright)',
+                }
+              : undefined
+          }
+        >
+          <Settings size={16} strokeWidth={2} />
+        </PrefetchNavLink>
+      </div>
 
       {/* Smooth downward gradient fade so scrolled content dissolves softly behind the Top Bar */}
       <span

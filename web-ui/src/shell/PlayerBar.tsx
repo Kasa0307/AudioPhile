@@ -41,7 +41,19 @@ export function PlayerBar() {
   const showNerdStats = usePlayer((s) => s.showNerdStats);
   const track = usePlayer((s) => {
     const entry = s.queue[s.index]?.track;
-    return entry && entry.videoId === s.nowPlaying?.videoId ? entry : null;
+    if (entry && entry.videoId === s.nowPlaying?.videoId) return entry;
+    if (!s.nowPlaying) return null;
+    return {
+      videoId: s.nowPlaying.videoId,
+      title: s.nowPlaying.title,
+      artists: s.nowPlaying.artist ? [{ name: s.nowPlaying.artist, id: null }] : [],
+      album: null,
+      durationSec: s.nowPlaying.durationSec || null,
+      explicit: false,
+      thumbnail: s.nowPlaying.artworkUrl,
+      index: null,
+      plays: null,
+    };
   });
   const hasTrack = nowPlaying !== null;
   const videoId = nowPlaying?.videoId ?? null;
