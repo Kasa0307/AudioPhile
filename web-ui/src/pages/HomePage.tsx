@@ -287,7 +287,7 @@ function QuickPicksEditorialDeck({
         to={shelf.seeAll ? browseHref(shelf.seeAll) : null}
         meta={`${shelf.items.length} TRACKS`}
       />
-      <div className="no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto px-4">
+      <div className="no-scrollbar smooth-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto px-4">
         {pages.map((group, pageIdx) => (
           <div
             key={pageIdx}
@@ -313,7 +313,7 @@ function QuickPicksEditorialDeck({
                     triggerHaptic('light');
                     playTrack(item);
                   }}
-                  className="group flex w-full items-center gap-3 rounded-[14px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.06] active:scale-[0.99]"
+                  className="tactile-press group flex w-full items-center gap-3 rounded-[14px] px-2.5 py-2 text-left hover:bg-white/[0.06]"
                   style={
                     checked || (!selecting && active)
                       ? { backgroundColor: 'rgba(var(--accent-rgb), 0.14)' }
@@ -400,7 +400,7 @@ function CuratedBentoShelf({
         to={shelf.seeAll ? browseHref(shelf.seeAll) : null}
         meta="CURATED MIX"
       />
-      <div className="no-scrollbar flex snap-x snap-mandatory gap-3 overflow-x-auto px-4">
+      <div className="no-scrollbar smooth-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto px-4">
         {clusters.map((chunk, idx) => {
           const lead = chunk[0]!;
           const rest = chunk.slice(1, 4);

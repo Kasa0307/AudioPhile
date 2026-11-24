@@ -140,9 +140,9 @@ export function PlayerBar() {
         </button>
       </div>
 
-      {/* Track Artwork + Metadata */}
+      {/* Track Artwork + Metadata with smooth cross-swap animation */}
       {nowPlaying ? (
-        <div className="flex items-center gap-3.5">
+        <div key={nowPlaying.videoId} className="animate-track-swap flex items-center gap-3.5">
           <button
             type="button"
             onClick={() => {

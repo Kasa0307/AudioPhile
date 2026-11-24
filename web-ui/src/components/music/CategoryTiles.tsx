@@ -98,11 +98,15 @@ function CategoryTile({ category, index }: { category: Category; index: number }
   const artwork = borrowed ? sizedArtwork(borrowed.thumbnail, 160) : null;
 
   return (
-    <li ref={ref}>
+    <li
+      ref={ref}
+      className="animate-card-in"
+      style={{ animationDelay: `${Math.min((index % 12) * 28, 220)}ms` }}
+    >
       <PrefetchLink
         to={browseHref(category.link)}
         onClick={() => triggerHaptic('light')}
-        className="group relative flex aspect-[16/10] flex-col justify-between overflow-hidden rounded-[18px] border border-white/[0.12] px-3.5 py-3 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_12px_28px_rgba(0,0,0,0.45)] transition-transform duration-200 active:scale-[0.96]"
+        className="tactile-press group relative flex aspect-[16/10] flex-col justify-between overflow-hidden rounded-[18px] border border-white/[0.12] px-3.5 py-3 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_12px_28px_rgba(0,0,0,0.45)]"
         style={
           {
             '--tile-color': category.color,

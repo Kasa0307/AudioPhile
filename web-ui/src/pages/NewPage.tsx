@@ -46,7 +46,7 @@ function SpotlightCarousel({ shelf, index }: { shelf: Shelf; index: string }) {
         to={shelf.seeAll ? browseHref(shelf.seeAll) : null}
         badge="SPOTLIGHT RELEASES"
       />
-      <div className="no-scrollbar flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-4 pb-2">
+      <div className="no-scrollbar smooth-scroll flex snap-x snap-mandatory gap-3.5 overflow-x-auto px-4 pb-2">
         {shelf.items.map((item, i) => {
           const href = hrefFor(item);
           const artist = item.artists.map((a) => a.name).filter(Boolean).join(', ') || item.subtitle;
@@ -173,7 +173,7 @@ function PulseChartShelf({ shelf, index }: { shelf: Shelf; index: string }) {
                     triggerHaptic('light');
                     playTrack(item);
                   }}
-                  className="flex w-full items-center gap-3 rounded-[14px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.06] active:scale-[0.99]"
+                  className="tactile-press flex w-full items-center gap-3 rounded-[14px] px-2.5 py-2 text-left hover:bg-white/[0.06]"
                   style={active ? { backgroundColor: 'rgba(var(--accent-rgb), 0.14)' } : undefined}
                 >
                   <span

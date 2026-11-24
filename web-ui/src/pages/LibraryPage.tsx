@@ -283,9 +283,16 @@ export default function LibraryPage() {
       )}
 
       {primaryGrid.length > 0 && (
-        <ul className="grid grid-cols-2 gap-x-3.5 gap-y-5 px-4 pt-1 sm:grid-cols-3 lg:grid-cols-4">
+        <ul
+          key={`${section}-${musicOnly ? 'm' : 'a'}`}
+          className="grid grid-cols-2 gap-x-3.5 gap-y-5 px-4 pt-1 sm:grid-cols-3 lg:grid-cols-4"
+        >
           {primaryGrid.map((item, i) => (
-            <li key={`${item.id}-${i}`}>
+            <li
+              key={`${item.id}-${i}`}
+              className="animate-card-in"
+              style={{ animationDelay: `${Math.min(i * 24, 190)}ms` }}
+            >
               <VaultCollectionCard item={item} />
             </li>
           ))}

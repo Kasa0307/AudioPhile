@@ -35,7 +35,7 @@ export function UpdateModal() {
       role="dialog"
       aria-modal="true"
       aria-label="Update Available"
-      className="fixed inset-0 z-[10075] flex items-end justify-center bg-black/72 p-3 backdrop-blur-md sm:items-center"
+      className="animate-scrim-in fixed inset-0 z-[10075] flex items-end justify-center bg-black/72 p-3 backdrop-blur-md sm:items-center"
       onClick={() => {
         if (!isBusy) dismissModal();
       }}

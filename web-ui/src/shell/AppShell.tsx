@@ -49,6 +49,14 @@ export function AppShell() {
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
 
+  // Compute top-level route key so tab-to-tab transitions animate smoothly without resetting library sub-tabs unnecessarily.
+  const routeKey = pathname.startsWith('/library') ? '/library' : pathname;
+
+  useEffect(() => {
+    const scroller = document.getElementById('scrollable-page');
+    if (scroller) scroller.scrollTo({ top: 0, behavior: 'auto' });
+  }, [routeKey]);
+
   useEffect(() => {
     const w = window as unknown as {
       __audiophileHandleBack?: () => 'handled' | 'at_root';
@@ -139,9 +147,9 @@ export function AppShell() {
       <AppTopBar />
 
       <div className="relative flex min-h-0 flex-1 flex-row overflow-hidden">
-        {/* Now Playing Sheet (Slide-up above AppTopBar on phone, side deck on wide tablet) */}
+        {/* Now Playing Sheet (Silky spring slide-up above AppTopBar on phone) */}
         <aside
-          className={`flex w-[380px] flex-none flex-col border-r border-white/[0.08] bg-[#080c16]/90 backdrop-blur-2xl max-sm:fixed max-sm:inset-0 max-sm:z-[9940] max-sm:w-full max-sm:border-r-0 max-sm:bg-[#07090f]/98 max-sm:backdrop-blur-3xl max-sm:transition-transform max-sm:duration-300 max-sm:ease-out ${
+          className={`flex w-[380px] flex-none flex-col border-r border-white/[0.08] bg-[#080c16]/90 backdrop-blur-2xl max-sm:fixed max-sm:inset-0 max-sm:z-[9940] max-sm:w-full max-sm:border-r-0 max-sm:bg-[#07090f]/98 max-sm:backdrop-blur-3xl max-sm:transition-transform max-sm:duration-[380ms] max-sm:ease-[cubic-bezier(0.22,1,0.36,1)] ${
             mobileConsoleOpen ? 'max-sm:translate-y-0' : 'max-sm:pointer-events-none max-sm:translate-y-full'
           }`}
           style={{
@@ -153,12 +161,12 @@ export function AppShell() {
           <SidePanel />
         </aside>
 
-        {/* Scrollable Screen Canvas with Safe Bottom Clearance (Sonic Dock height + 28px) */}
+        {/* Scrollable Screen Canvas with Smooth Page Transitions & Safe Bottom Clearance */}
         <main
           id="scrollable-page"
-          className="no-scrollbar relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto data-tint:bg-(--page-tint) data-tint:transition-[background-color] data-tint:duration-300 data-tint:ease-in"
+          className="no-scrollbar smooth-scroll relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto data-tint:bg-(--page-tint) data-tint:transition-[background-color] data-tint:duration-300 data-tint:ease-in"
         >
-          <div className="min-h-full pb-[calc(158px+env(safe-area-inset-bottom,0px))]">
+          <div key={routeKey} className="animate-page-enter min-h-full pb-[calc(158px+env(safe-area-inset-bottom,0px))]">
             <Outlet />
           </div>
         </main>

@@ -184,7 +184,7 @@ export function MultiPlaylistSheet() {
       role="dialog"
       aria-modal="true"
       aria-label="Add to Playlists"
-      className="fixed inset-0 z-[10060] flex items-end justify-center bg-black/68 backdrop-blur-md"
+      className="animate-scrim-in fixed inset-0 z-[10060] flex items-end justify-center bg-black/68 backdrop-blur-md"
       onClick={() => {
         if (!isSaving) closePlaylistPicker();
       }}

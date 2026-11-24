@@ -162,7 +162,7 @@ export function SearchField({
             role="dialog"
             aria-modal="true"
             aria-label="Search Audiophile"
-            className="fixed inset-0 z-[10055] flex items-end justify-center bg-black/68 backdrop-blur-md"
+            className="animate-scrim-in fixed inset-0 z-[10055] flex items-end justify-center bg-black/68 backdrop-blur-md"
             onClick={closeSheet}
           >
             <div
@@ -215,7 +215,7 @@ export function SearchField({
                     spellCheck={false}
                     enterKeyHint="search"
                     onChange={(e) => setValue(e.target.value)}
-                    className="h-[44px] w-full bg-transparent px-2.5 text-[15px] font-medium text-primary placeholder:text-tertiary [&::-webkit-search-cancel-button]:hidden"
+                    className="h-[44px] w-full appearance-none border-0 bg-transparent px-2.5 text-[15px] font-medium text-primary shadow-none outline-none ring-0 placeholder:text-tertiary focus:outline-none focus:ring-0 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
                   />
                   {value && (
                     <button

@@ -103,7 +103,7 @@ function TrackActionSheet({ track, onClose }: { track: Track; onClose: () => voi
       role="dialog"
       aria-modal="true"
       aria-label={`Options for ${displayTitle}`}
-      className="fixed inset-0 z-[10050] flex items-end justify-center bg-black/62 backdrop-blur-md"
+      className="animate-scrim-in fixed inset-0 z-[10050] flex items-end justify-center bg-black/62 backdrop-blur-md"
       onClick={onClose}
     >
       <div
