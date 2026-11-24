@@ -121,7 +121,8 @@ async function fetchManifestRaw(url: string): Promise<string> {
 
 function parseManifest(raw: string): UpdateManifest | null {
   try {
-    const data = JSON.parse(raw) as Partial<UpdateManifest>;
+    const cleaned = raw.replace(/^\uFEFF/, '').trim();
+    const data = JSON.parse(cleaned) as Partial<UpdateManifest>;
     if (
       typeof data.versionCode !== 'number' ||
       typeof data.versionName !== 'string' ||
